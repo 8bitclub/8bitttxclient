@@ -70,13 +70,82 @@ diagnostics_menu() {
   done
 }
 
-show_ip_address() {
-  IP_INFO=$(ip -4 a | grep -v '127.0.0.1' | grep inet | head -n 1 | awk '{print $2 " on " $NF}')
-  dialog --title "IP Address Info" --msgbox "$IP_INFO" 7 50
+get_ip_info() {
+  ip -4 a | grep -v '127.0.0.1' | grep inet | head -n 1 | awk '{print $2 " on " $NF}'
 }
 
 show_information() {
-  dialog --title "Information" --msgbox "8BitClub Teletext Services - CLIENT (Version 1.0)\n\n8BitClub - 2025" 10 60
+  IP_INFO=$(get_ip_info)
+  MSG="8BitClub Teletext Services - CLIENT (Version 1.0)\n\n8BitClub - 2025\n\nIP Address: $IP_INFO"
+  dialog --title "Information" --msgbox "$MSG" 12 60
+}
+
+network_settings() {
+  TMPFILE=$(mktemp)
+
+  dialog --form "Enter network settings (leave blank if DHCP):" 15 60 5 \
+    "Interface:" 1 1 "eth0" 1 15 20 0 \
+    "IP Address:" 2 1 "" 2 15 20 0 \
+    "Netmask:" 3 1 "" 3 15 20 0 \
+    "Gateway:" 4 1 "" 4 15 20 0 \
+    2> "$TMPFILE"
+
+  dialog --yesno "Use DHCP?" 7 40
+  USE_DHCP=$?
+
+  INTERFACE=$(sed -n 1p "$TMPFILE")
+  IPADDR=$(sed -n 2p "$TMPFILE")
+  NETMASK=$(sed -n 3p "$TMPFILE")
+  GATEWAY=$(sed -n 4p "$TMPFILE")
+
+  BACKUP="/etc/network/interfaces.bak.$(date +%s)"
+  sudo cp /etc/network/interfaces "$BACKUP"
+
+  if [ "$USE_DHCP" -eq 0 ]; then
+    sudo bash -c "cat > /etc/network/interfaces" <<EOF
+auto lo
+iface lo inet loopback
+
+auto $INTERFACE
+iface $INTERFACE inet dhcp
+EOF
+  else
+    sudo bash -c "cat > /etc/network/interfaces" <<EOF
+auto lo
+iface lo inet loopback
+
+auto $INTERFACE
+iface $INTERFACE inet static
+    address $IPADDR
+    netmask $NETMASK
+    gateway $GATEWAY
+EOF
+  fi
+
+  dialog --msgbox "Network settings applied.\nBackup: $BACKUP\nRestarting networking..." 10 50
+  sudo systemctl restart networking
+
+  rm "$TMPFILE"
+}
+
+options_menu() {
+  while true; do
+    CHOICE=$(dialog --clear \
+      --backtitle "$TITLE" \
+      --title "Options Menu" \
+      --menu "Select an option:" \
+      15 50 2 \
+      1 "Network Settings" \
+      2 "Back to Main Menu" \
+      2>&1 >/dev/tty)
+
+    clear
+
+    case $CHOICE in
+      1) network_settings ;;
+      2) break ;;
+    esac
+  done
 }
 
 main_menu() {
@@ -85,9 +154,9 @@ main_menu() {
       --backtitle "$TITLE" \
       --title "$TITLE" \
       --menu "Select an option:" \
-      15 60 6 \
+      20 60 6 \
       1 "Diagnostics" \
-      2 "Show IP Address" \
+      2 "Options" \
       3 "Information" \
       4 "Exit" \
       2>&1 >/dev/tty)
@@ -96,7 +165,7 @@ main_menu() {
 
     case $CHOICE in
       1) diagnostics_menu ;;
-      2) show_ip_address ;;
+      2) options_menu ;;
       3) show_information ;;
       4) break ;;
     esac
